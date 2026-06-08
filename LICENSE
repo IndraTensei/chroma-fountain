@@ -1,0 +1,16 @@
+# chroma-fountain
+
+Generate beautiful color palettes from text descriptions, random seeds, or images — zero dependencies.
+
+## Quick Start
+
+```bash
+python chroma_fountain.py "sunset over the ocean"
+python chroma_fountain.py --random --count 8
+python chroma_fountain.py --image photo.jpg
+python chroma_fountain.py --preset neon-nights --format svg --output palette.svg
+```
+
+## License
+
+MIT

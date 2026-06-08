@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+"""chroma-fountain — Generate beautiful color palettes from text, images, or random seeds."""
+
+from chroma_fountain import main
+
+if __name__ == "__main__":
+    main()
