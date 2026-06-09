@@ -25,7 +25,7 @@ import struct
 import sys
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 # ─── Color Science ────────────────────────────────────────────────────────────
 
@@ -92,6 +92,139 @@ def text_color_for(bg_hex):
     cr_black = contrast_ratio(bg_hex, "#000000")
     cr_white = contrast_ratio(bg_hex, "#ffffff")
     return "#ffffff" if cr_white >= cr_black else "#000000"
+
+
+# ─── Colorblind Simulation ────────────────────────────────────────────────────
+
+# Simulation matrices for different types of color vision deficiency
+# Based on Brettel et al. (1997) and Machado et al. (2009)
+_CB_MATRICES = {
+    "protanopia": (
+        (0.567, 0.433, 0.000),
+        (0.558, 0.442, 0.000),
+        (0.000, 0.242, 0.758),
+    ),
+    "deuteranopia": (
+        (0.625, 0.375, 0.000),
+        (0.700, 0.300, 0.000),
+        (0.000, 0.300, 0.700),
+    ),
+    "tritanopia": (
+        (0.950, 0.050, 0.000),
+        (0.000, 0.433, 0.567),
+        (0.000, 0.475, 0.525),
+    ),
+}
+
+def simulate_colorblind(hex_color, cvd_type="deuteranopia"):
+    """Simulate how a color appears to someone with color vision deficiency.
+
+    Args:
+        hex_color: HEX color string
+        cvd_type: One of 'protanopia', 'deuteranopia', 'tritanopia'
+
+    Returns:
+        HEX color string as seen by someone with the specified CVD
+    """
+    if cvd_type not in _CB_MATRICES:
+        raise ValueError(f"Unknown CVD type '{cvd_type}'. Choose from: {list(_CB_MATRICES.keys())}")
+
+    r, g, b = hex_to_rgb(hex_color)
+    r_, g_, b_ = r / 255.0, g / 255.0, b / 255.0
+
+    # Linearize (approximate sRGB gamma)
+    def linearize(v):
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+    r_l, g_l, b_l = linearize(r_), linearize(g_), linearize(b_)
+
+    m = _CB_MATRICES[cvd_type]
+    r_new = m[0][0] * r_l + m[0][1] * g_l + m[0][2] * b_l
+    g_new = m[1][0] * r_l + m[1][1] * g_l + m[1][2] * b_l
+    b_new = m[2][0] * r_l + m[2][1] * g_l + m[2][2] * b_l
+
+    # Delinearize
+    def delinearize(v):
+        v = max(0.0, min(1.0, v))
+        return v * 12.92 if v <= 0.0031308 else 1.055 * (v ** (1.0 / 2.4)) - 0.055
+
+    r_f = int(delinearize(r_new) * 255)
+    g_f = int(delinearize(g_new) * 255)
+    b_f = int(delinearize(b_new) * 255)
+
+    return rgb_to_hex(r_f, g_f, b_f)
+
+
+def colorblind_distance(hex1, hex2, cvd_type="deuteranopia"):
+    """Distance between two colors as perceived by someone with CVD."""
+    sim1 = simulate_colorblind(hex1, cvd_type)
+    sim2 = simulate_colorblind(hex2, cvd_type)
+    r1, g1, b1 = hex_to_rgb(sim1)
+    r2, g2, b2 = hex_to_rgb(sim2)
+    return math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2 + (b1 - b2) ** 2)
+
+
+def make_colorblind_safe(colors, cvd_type="deuteranopia", iterations=50):
+    """Adjust a palette to be more distinguishable for colorblind users.
+
+    Uses iterative perturbation to maximize the minimum distance between
+    any pair of colors in CVD-simulated space.
+
+    Args:
+        colors: List of HEX color strings
+        cvd_type: CVD type to optimize for
+        iterations: Number of optimization iterations
+
+    Returns:
+        Adjusted list of HEX color strings
+    """
+    if len(colors) <= 1:
+        return list(colors)
+
+    # Convert to HSL for perturbation
+    hsls = [rgb_to_hsl(*hex_to_rgb(c)) for c in colors]
+    best = list(colors)
+    best_score = _cb_score(colors, cvd_type)
+
+    rng = random.Random(42)
+
+    for _ in range(iterations):
+        # Pick a random color to perturb
+        idx = rng.randint(0, len(hsls) - 1)
+        h, s, l = hsls[idx]
+
+        # Try small perturbations
+        dh = rng.uniform(-20, 20)
+        ds = rng.uniform(-10, 10)
+        dl = rng.uniform(-10, 10)
+
+        new_h = (h + dh) % 360
+        new_s = max(5, min(100, s + ds))
+        new_l = max(5, min(95, l + dl))
+
+        hsls[idx] = (new_h, new_s, new_l)
+        candidate = [rgb_to_hex(*hsl_to_rgb(*hsl)) for hsl in hsls]
+        score = _cb_score(candidate, cvd_type)
+
+        if score > best_score:
+            best = candidate
+            best_score = score
+        else:
+            hsls[idx] = (h, s, l)  # Revert
+
+    return best
+
+
+def _cb_score(colors, cvd_type):
+    """Score a palette for colorblind distinguishability (higher = better)."""
+    if len(colors) <= 1:
+        return 0.0
+    min_dist = float("inf")
+    for i in range(len(colors)):
+        for j in range(i + 1, len(colors)):
+            d = colorblind_distance(colors[i], colors[j], cvd_type)
+            min_dist = min(min_dist, d)
+    return min_dist
 
 
 # ─── Seeded RNG (deterministic from text) ─────────────────────────────────────
@@ -680,6 +813,175 @@ def format_html(colors):
 </html>'''
 
 
+# ─── PNG Export (zero dependencies) ────────────────────────────────────────────
+
+def _crc32(data):
+    """Compute CRC32 matching PNG spec (zlib.crc32 with initial 0)."""
+    import zlib
+    return zlib.crc32(data) & 0xFFFFFFFF
+
+
+def _png_chunk(chunk_type, data):
+    """Create a PNG chunk: length + type + data + CRC."""
+    import zlib
+    chunk = chunk_type + data
+    return struct.pack(">I", len(data)) + chunk + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
+
+
+def format_png(colors, swatch_width=120, swatch_height=160, label_height=30):
+    """Export palette as a PNG image — pure Python, zero dependencies.
+
+    Creates a beautiful palette image with rounded swatches.
+
+    Args:
+        colors: List of HEX color strings
+        swatch_width: Width of each color swatch in pixels
+        swatch_height: Height of each color swatch in pixels
+        label_height: Height of the label area below swatches
+
+    Returns:
+        bytes: Complete PNG file as bytes
+    """
+    import zlib
+
+    n = len(colors)
+    total_w = n * swatch_width
+    total_h = swatch_height + label_height
+
+    # Build raw pixel data (RGB, no alpha)
+    # Each row: filter byte (0x00 = None) + RGB bytes
+    raw_rows = []
+    for y in range(total_h):
+        row = bytearray()
+        row.append(0x00)  # Filter: None
+        for x in range(total_w):
+            # Determine which swatch this pixel belongs to
+            swatch_idx = min(x // swatch_width, n - 1)
+            c = hex_to_rgb(colors[swatch_idx])
+
+            if y < swatch_height:
+                # Swatch area
+                r, g, b = c
+            else:
+                # Label area — dark background with text color indication
+                label_y = y - swatch_height
+                bg_color = (40, 40, 40)  # Dark label background
+                # Make a subtle border between swatch and label
+                if label_y < 2:
+                    r, g, b = (245, 245, 245)  # Border line
+                else:
+                    r, g, b = bg_color
+
+            row.extend([r, g, b])
+        raw_rows.append(bytes(row))
+
+    raw_data = b"".join(raw_rows)
+
+    # Compress
+    compressed = zlib.compress(raw_data)
+
+    # Build PNG
+    png = bytearray()
+    # PNG signature
+    png.extend(b"\x89PNG\r\n\x1a\n")
+
+    # IHDR chunk
+    ihdr_data = struct.pack(">IIBBBBB", total_w, total_h, 8, 2, 0, 0, 0)
+    png.extend(_png_chunk(b"IHDR", ihdr_data))
+
+    # IDAT chunk
+    png.extend(_png_chunk(b"IDAT", compressed))
+
+    # IEND chunk
+    png.extend(_png_chunk(b"IEND", b""))
+
+    return bytes(png)
+
+
+# ─── Palette Save / Load / History ─────────────────────────────────────────────
+
+SAVE_DIR = Path.home() / ".chroma-fountain"
+SAVE_FILE = SAVE_DIR / "palettes.json"
+
+
+def _ensure_save_dir():
+    """Create the save directory if it doesn't exist."""
+    SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_saved_palettes():
+    """Load all saved palettes from disk."""
+    if not SAVE_FILE.exists():
+        return {}
+    try:
+        with open(SAVE_FILE, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+
+
+def _save_palettes(data):
+    """Write palettes to disk."""
+    _ensure_save_dir()
+    with open(SAVE_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def save_palette(name, colors, tags=None):
+    """Save a palette with a name for later retrieval.
+
+    Args:
+        name: Unique name for the palette
+        colors: List of HEX color strings
+        tags: Optional list of tag strings for categorization
+    """
+    palettes = _load_saved_palettes()
+    import datetime
+    palettes[name] = {
+        "colors": list(colors),
+        "tags": tags or [],
+        "saved_at": datetime.datetime.now().isoformat(),
+    }
+    _save_palettes(palettes)
+    print(f"Palette '{name}' saved ({len(colors)} colors).", file=sys.stderr)
+
+
+def load_palette(name):
+    """Load a saved palette by name.
+
+    Returns:
+        List of HEX color strings, or None if not found.
+    """
+    palettes = _load_saved_palettes()
+    if name not in palettes:
+        print(f"Error: No saved palette named '{name}'.", file=sys.stderr)
+        print(f"Saved palettes: {', '.join(sorted(palettes.keys()))}", file=sys.stderr)
+        return None
+    return palettes[name]["colors"]
+
+
+def list_saved_palettes():
+    """Print all saved palettes."""
+    palettes = _load_saved_palettes()
+    if not palettes:
+        print("No saved palettes yet. Use --save <name> to save one.")
+        return
+
+    print("Saved palettes:")
+    for name, data in sorted(palettes.items()):
+        tags = f" [{', '.join(data['tags'])}]" if data.get("tags") else ""
+        saved_at = data.get("saved_at", "?")[:10]
+        num = len(data["colors"])
+        # Show mini color blocks
+        swatches = ""
+        for c in data["colors"][:8]:
+            r, g, b = hex_to_rgb(c)
+            swatches += f"\033[48;2;{r};{g};{b}m  \033[0m"
+        if num > 8:
+            swatches += " …"
+        print(f"  {name:20s} {swatches}  {num} colors{tags}  ({saved_at})")
+
+
 # ─── Harmony Generation ───────────────────────────────────────────────────────
 
 def generate_harmony(base_hex, mode="complementary"):
@@ -727,6 +1029,359 @@ def generate_harmony(base_hex, mode="complementary"):
         return generate_harmony(base_hex, "complementary")
 
 
+# ─── Palette Scoring ──────────────────────────────────────────────────────────
+
+def score_palette(colors):
+    """Score a palette on multiple quality dimensions.
+
+    Returns a dict with scores (0-100) for:
+      - contrast: minimum WCAG contrast ratio between any pair
+      - diversity: perceptual spread in HSL space
+      - colorblind_safety: minimum distance in CVD-simulated space
+      - overall: weighted composite score
+    """
+    if len(colors) < 2:
+        return {"contrast": 0, "diversity": 0, "colorblind_safety": 0, "overall": 0}
+
+    # ── Contrast score ──
+    min_contrast = float("inf")
+    for i in range(len(colors)):
+        for j in range(i + 1, len(colors)):
+            cr = contrast_ratio(colors[i], colors[j])
+            min_contrast = min(min_contrast, cr)
+    # Map: 7+ = 100 (AAA), 4.5 = 80 (AA), 3 = 50 (large text AA), 1 = 0
+    if min_contrast >= 7:
+        contrast_score = 100
+    elif min_contrast >= 4.5:
+        contrast_score = 80 + (min_contrast - 4.5) * (20 / 2.5)
+    elif min_contrast >= 3:
+        contrast_score = 50 + (min_contrast - 3) * (30 / 1.5)
+    else:
+        contrast_score = max(0, min_contrast / 3 * 50)
+
+    # ── Diversity score ──
+    hsls = [rgb_to_hsl(*hex_to_rgb(c)) for c in colors]
+    min_hsl_dist = float("inf")
+    for i in range(len(hsls)):
+        for j in range(i + 1, len(hsls)):
+            dh = min(abs(hsls[i][0] - hsls[j][0]), 360 - abs(hsls[i][0] - hsls[j][0])) / 360.0
+            ds = abs(hsls[i][1] - hsls[j][1]) / 100.0
+            dl = abs(hsls[i][2] - hsls[j][2]) / 100.0
+            d = math.sqrt(dh * dh + ds * ds + dl * dl)
+            min_hsl_dist = min(min_hsl_dist, d)
+    # A good palette has min HSL distance > 0.15
+    diversity_score = min(100, max(0, min_hsl_dist / 0.25 * 100))
+
+    # ── Colorblind safety score ──
+    cb_min = float("inf")
+    for cvd in _CB_MATRICES:
+        for i in range(len(colors)):
+            for j in range(i + 1, len(colors)):
+                d = colorblind_distance(colors[i], colors[j], cvd)
+                cb_min = min(cb_min, d)
+    # A good palette has CVD distance > 30
+    cb_score = min(100, max(0, cb_min / 50 * 100))
+
+    # ── Overall ──
+    overall = contrast_score * 0.35 + diversity_score * 0.35 + cb_score * 0.30
+
+    return {
+        "contrast": round(contrast_score, 1),
+        "diversity": round(diversity_score, 1),
+        "colorblind_safety": round(cb_score, 1),
+        "overall": round(overall, 1),
+        "min_contrast_ratio": round(min_contrast, 2),
+        "grade": _score_to_grade(overall),
+    }
+
+
+def _score_to_grade(score):
+    """Convert a numeric score to a letter grade."""
+    if score >= 90:
+        return "A+"
+    elif score >= 80:
+        return "A"
+    elif score >= 70:
+        return "B+"
+    elif score >= 60:
+        return "B"
+    elif score >= 50:
+        return "C"
+    elif score >= 40:
+        return "D"
+    else:
+        return "F"
+
+
+def format_score_report(colors, title="Palette Score"):
+    """Format a detailed score report for a palette."""
+    s = score_palette(colors)
+
+    # Build bar chart
+    def bar(val, width=20):
+        filled = int(val / 100 * width)
+        return "█" * filled + "░" * (width - filled)
+
+    lines = [
+        f"╔{'═' * 50}╗",
+        f"║ 📊 {title:^44s} ║",
+        f"╠{'═' * 50}╣",
+        f"║                                                      ║",
+        f"║  Grade: {s['grade']:4s}  (overall: {s['overall']:5.1f}/100)          ║",
+        f"║                                                      ║",
+        f"║  Contrast:        {bar(s['contrast'])} {s['contrast']:5.1f}  ║",
+        f"║  Diversity:       {bar(s['diversity'])} {s['diversity']:5.1f}  ║",
+        f"║  Colorblind Safe: {bar(s['colorblind_safety'])} {s['colorblind_safety']:5.1f}  ║",
+        f"║                                                      ║",
+        f"║  Min contrast ratio: {s['min_contrast_ratio']:.2f}:1{' ' * 24}║",
+        f"╚{'═' * 50}╝",
+    ]
+
+    # Add color swatches
+    swatch_line = "  "
+    for c in colors:
+        r, g, b = hex_to_rgb(c)
+        swatch_line += f"\033[48;2;{r};{g};{b}m    \033[0m"
+    lines.append(swatch_line)
+    hex_line = "  "
+    for c in colors:
+        hex_line += f" {c} "
+    lines.append(hex_line)
+
+    return "\n".join(lines)
+
+
+# ─── Palette Comparison ───────────────────────────────────────────────────────
+
+def compare_palettes(colors_a, colors_b, label_a="Palette A", label_b="Palette B"):
+    """Compare two palettes side by side with diff indicators.
+
+    Shows both palettes and highlights which colors changed,
+    plus score comparison.
+    """
+    score_a = score_palette(colors_a)
+    score_b = score_palette(colors_b)
+
+    lines = []
+    lines.append(f"╔{'═' * 58}╗")
+    lines.append(f"║ 🔀  {label_a:^24s} ↔ {label_b:^24s}  ║")
+    lines.append(f"╠{'═' * 58}╣")
+
+    # Show swatches side by side
+    max_len = max(len(colors_a), len(colors_b))
+
+    # Top palette
+    swatch_a = "║  "
+    for c in colors_a:
+        r, g, b = hex_to_rgb(c)
+        swatch_a += f"\033[48;2;{r};{g};{b}m    \033[0m"
+    swatch_a = swatch_a.ljust(59 + len(swatch_a) - len(swatch_a.rstrip()))  # pad
+    # Simpler approach: just build lines
+    lines.append(f"║  {label_a}:")
+    swatch_line = "║  "
+    hex_line = "║  "
+    for c in colors_a:
+        r, g, b = hex_to_rgb(c)
+        swatch_line += f"\033[48;2;{r};{g};{b}m    \033[0m"
+        hex_line += f" {c} "
+    lines.append(swatch_line)
+    lines.append(hex_line)
+
+    lines.append(f"║  {'─' * 54}")
+
+    # Bottom palette
+    lines.append(f"║  {label_b}:")
+    swatch_line = "║  "
+    hex_line = "║  "
+    for c in colors_b:
+        r, g, b = hex_to_rgb(c)
+        swatch_line += f"\033[48;2;{r};{g};{b}m    \033[0m"
+        hex_line += f" {c} "
+    lines.append(swatch_line)
+    lines.append(hex_line)
+
+    lines.append(f"╠{'═' * 58}╣")
+
+    # Score comparison
+    lines.append(f"║  Score comparison:")
+    for key in ["contrast", "diversity", "colorblind_safety", "overall"]:
+        va, vb = score_a[key], score_b[key]
+        diff = vb - va
+        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "═")
+        sign = "+" if diff > 0 else ""
+        lines.append(
+            f"║    {key:20s}: {va:5.1f} → {vb:5.1f}  "
+            f"{arrow} {sign}{diff:.1f}"
+        )
+    lines.append(f"║  Grade: {score_a['grade']} → {score_b['grade']}")
+    lines.append(f"╚{'═' * 58}╝")
+
+    return "\n".join(lines)
+
+
+# ─── Interactive Mode ─────────────────────────────────────────────────────────
+
+def interactive_mode():
+    """Launch an interactive REPL for iterative palette refinement.
+
+    Commands:
+      <text>          — Generate a palette from text
+      random [n]      — Generate a random palette
+      preset <name>   — Load a preset
+      score           — Score the current palette
+      save <name>     — Save the current palette
+      load <name>     — Load a saved palette
+      list            — List saved palettes
+      colorblind      — Toggle colorblind optimization
+      count <n>       — Change number of colors
+      format <fmt>    — Change output format
+      compare <text>  — Compare current palette with new one
+      help            — Show this help
+      quit / exit     — Exit
+    """
+    import datetime
+
+    current_colors = generate_random(5)
+    current_format = "terminal"
+    cb_optimize = False
+    cb_type = "deuteranopia"
+    count = 5
+
+    print("🎨 chroma-fountain interactive mode")
+    print("   Type 'help' for commands, 'quit' to exit.")
+    print()
+    print(format_terminal(current_colors))
+
+    while True:
+        try:
+            raw = input("\n\033[1mchroma>\033[0m ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye! 👋")
+            break
+
+        if not raw:
+            continue
+
+        parts = raw.split(maxsplit=1)
+        cmd = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if cmd in ("quit", "exit", "q"):
+            print("Bye! 👋")
+            break
+
+        elif cmd == "help":
+            print("""Commands:
+  <text>           Generate palette from text description
+  random [n]       Generate random palette (default 5 colors)
+  preset <name>    Load a named preset palette
+  score            Score the current palette
+  save <name>      Save current palette with a name
+  load <name>      Load a saved palette
+  list             List all saved palettes
+  colorblind       Toggle colorblind optimization on/off
+  count <n>        Change number of colors
+  format <fmt>     Change output format (terminal/json/css/svg/html)
+  compare <text>   Compare current palette with a new one
+  help             Show this help
+  quit             Exit interactive mode""")
+
+        elif cmd == "random":
+            n = int(arg) if arg.isdigit() else count
+            current_colors = generate_random(n)
+            count = n
+            if cb_optimize:
+                current_colors = make_colorblind_safe(current_colors, cb_type)
+            print(format_terminal(current_colors))
+
+        elif cmd == "preset":
+            if not arg:
+                print("Usage: preset <name>")
+                print(f"Available: {', '.join(sorted(PRESETS.keys()))}")
+                continue
+            try:
+                current_colors = generate_preset(arg, count)
+                if cb_optimize:
+                    current_colors = make_colorblind_safe(current_colors, cb_type)
+                print(format_terminal(current_colors))
+            except SystemExit:
+                pass
+
+        elif cmd == "score":
+            print(format_score_report(current_colors))
+
+        elif cmd == "save":
+            if not arg:
+                print("Usage: save <name>")
+                continue
+            save_palette(arg, current_colors)
+            print(f"Saved as '{arg}'.")
+
+        elif cmd == "load":
+            if not arg:
+                print("Usage: load <name>")
+                continue
+            loaded = load_palette(arg)
+            if loaded:
+                current_colors = loaded
+                print(format_terminal(current_colors))
+
+        elif cmd == "list":
+            list_saved_palettes()
+
+        elif cmd == "colorblind":
+            cb_optimize = not cb_optimize
+            state = "ON" if cb_optimize else "OFF"
+            print(f"Colorblind optimization: {state} ({cb_type})")
+            if cb_optimize:
+                current_colors = make_colorblind_safe(current_colors, cb_type)
+                print(format_terminal(current_colors))
+
+        elif cmd == "count":
+            if not arg.isdigit():
+                print("Usage: count <number>")
+                continue
+            count = max(2, min(12, int(arg)))
+            print(f"Color count set to {count}.")
+
+        elif cmd == "format":
+            if arg not in ("terminal", "json", "css", "scss", "svg", "csv", "html"):
+                print(f"Unknown format '{arg}'. Choose from: terminal, json, css, scss, svg, csv, html")
+                continue
+            current_format = arg
+            if arg == "terminal":
+                print(format_terminal(current_colors))
+            elif arg == "json":
+                print(format_json(current_colors))
+            elif arg == "css":
+                print(format_css(current_colors))
+            elif arg == "scss":
+                print(format_scss(current_colors))
+            elif arg == "svg":
+                print("SVG output. Use --output in CLI mode to save to file.")
+            elif arg == "csv":
+                print(format_csv(current_colors))
+            elif arg == "html":
+                print("HTML output. Use --output in CLI mode to save to file.")
+
+        elif cmd == "compare":
+            if not arg:
+                print("Usage: compare <text>")
+                continue
+            new_colors = generate_from_text(arg, count)
+            if cb_optimize:
+                new_colors = make_colorblind_safe(new_colors, cb_type)
+            print(compare_palettes(current_colors, new_colors, "Current", f'"{arg}"'))
+
+        else:
+            # Treat as text input
+            text = raw
+            current_colors = generate_from_text(text, count)
+            if cb_optimize:
+                current_colors = make_colorblind_safe(current_colors, cb_type)
+            print(format_terminal(current_colors))
+
+
 # ─── Main CLI ─────────────────────────────────────────────────────────────────
 
 def build_parser():
@@ -755,10 +1410,23 @@ Examples:
     src.add_argument("--harmony", metavar="HEX", help="Generate color harmony from a HEX color")
     src.add_argument("--list-presets", action="store_true", help="List all available presets")
 
+    # Save / Load / List (not mutually exclusive with input sources)
+    p.add_argument("--list-saved", action="store_true", help="List all saved palettes")
+    p.add_argument("--load", metavar="NAME", help="Load a saved palette by name")
+    p.add_argument("--save", metavar="NAME", help="Save the generated palette with a name")
+
+    # New in 1.2.0
+    p.add_argument("--score", action="store_true",
+                   help="Score the palette on contrast, diversity, and colorblind safety")
+    p.add_argument("--compare", metavar="TEXT_OR_HEX",
+                   help="Compare generated palette with another (text or comma-separated HEX)")
+    p.add_argument("--interactive", action="store_true",
+                   help="Launch interactive REPL mode for iterative palette refinement")
+
     # Options
     p.add_argument("--count", "-n", type=int, default=5, help="Number of colors (default: 5)")
     p.add_argument("--format", "-f", default="terminal",
-                   choices=["terminal", "json", "css", "scss", "svg", "csv", "html"],
+                   choices=["terminal", "json", "css", "scss", "svg", "csv", "html", "png"],
                    help="Output format (default: terminal)")
     p.add_argument("--output", "-o", metavar="FILE", help="Write output to file instead of stdout")
     p.add_argument("--harmony-mode", default="complementary",
@@ -766,6 +1434,12 @@ Examples:
                    help="Harmony mode (used with --harmony)")
     p.add_argument("--prefix", default="color", help="Variable prefix for CSS/SCSS output (default: color)")
     p.add_argument("--no-info", action="store_true", help="Terminal mode: show only color blocks")
+    p.add_argument("--colorblind", action="store_true",
+                   help="Optimize palette for colorblind accessibility")
+    p.add_argument("--colorblind-type", default="deuteranopia",
+                   choices=["protanopia", "deuteranopia", "tritanopia"],
+                   help="Type of color vision deficiency (default: deuteranopia)")
+    p.add_argument("--tags", metavar="TAGS", help="Comma-separated tags for saved palettes")
     p.add_argument("--version", "-v", action="version", version=f"chroma-fountain {__version__}")
 
     return p
@@ -774,6 +1448,11 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
+    # Handle --interactive mode
+    if args.interactive:
+        interactive_mode()
+        return
+
     # Handle --list-presets
     if args.list_presets:
         print("Available presets:")
@@ -781,8 +1460,17 @@ def main():
             print(f"  {name:20s} — {', '.join(keywords)}")
         return
 
+    # Handle --list-saved
+    if args.list_saved:
+        list_saved_palettes()
+        return
+
     # Generate palette
-    if args.image:
+    if args.load:
+        colors = load_palette(args.load)
+        if colors is None:
+            sys.exit(1)
+    elif args.image:
         colors = generate_from_image(args.image, args.count)
     elif args.random:
         colors = generate_random(args.count)
@@ -799,6 +1487,15 @@ def main():
         # Default: generate from a random seed
         colors = generate_random(args.count)
 
+    # Apply colorblind optimization
+    if args.colorblind:
+        colors = make_colorblind_safe(colors, cvd_type=args.colorblind_type)
+
+    # Save palette if requested
+    if args.save:
+        tags = [t.strip() for t in args.tags.split(",")] if args.tags else None
+        save_palette(args.save, colors, tags=tags)
+
     # Format output
     if args.format == "terminal":
         output = format_terminal(colors, show_info=not args.no_info)
@@ -814,17 +1511,48 @@ def main():
         output = format_csv(colors)
     elif args.format == "html":
         output = format_html(colors)
+    elif args.format == "png":
+        output = format_png(colors)
     else:
         output = format_terminal(colors)
 
     # Output
     if args.output:
-        with open(args.output, "w") as f:
+        mode = "wb" if args.format == "png" else "w"
+        with open(args.output, mode) as f:
             f.write(output)
-            f.write("\n")
+            if mode == "w":
+                f.write("\n")
         print(f"Palette saved to {args.output}", file=sys.stderr)
     else:
-        print(output)
+        if args.format == "png":
+            # Can't write binary to stdout easily; warn and use terminal format
+            print("Error: PNG format requires --output <file>.", file=sys.stderr)
+            print("Falling back to terminal output.", file=sys.stderr)
+            print(format_terminal(colors, show_info=not args.no_info))
+        else:
+            print(output)
+
+    # Handle --score
+    if args.score:
+        print()
+        print(format_score_report(colors))
+
+    # Handle --compare
+    if args.compare:
+        print()
+        # Determine if it's HEX colors or text
+        if "," in args.compare or args.compare.startswith("#") or all(
+            c in "0123456789abcdefABCDEF#" for c in args.compare.replace(",", "").replace(" ", "")
+        ):
+            # Parse as comma-separated HEX
+            hex_strs = [h.strip() for h in args.compare.split(",")]
+            hex_strs = [h if h.startswith("#") else f"#{h}" for h in hex_strs]
+            compare_colors = hex_strs
+        else:
+            # Treat as text
+            compare_colors = generate_from_text(args.compare, len(colors))
+        print(compare_palettes(colors, compare_colors, "Generated", args.compare))
 
 if __name__ == "__main__":
     main()

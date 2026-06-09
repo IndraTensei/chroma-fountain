@@ -24,6 +24,9 @@ No npm. No pip installs. No API keys. Just pure Python 3.
 - **⚡ Zero Dependencies** — Uses only Python standard library
 - **🔬 Color Science** — Proper HSL conversion, contrast ratios, and perceptual diversity
 - **📦 Usable as a Library** — Import it in your own Python projects
+- **📊 Palette Scoring** — Rate palettes on contrast, diversity & colorblind safety with letter grades
+- **🔀 Palette Comparison** — Compare two palettes side-by-side with score diffs
+- **💬 Interactive Mode** — REPL for iterative palette refinement with save/load/score/compare
 
 ---
 
@@ -102,6 +105,25 @@ python chroma_fountain.py "warm sunset" --format csv
  #e85d4a  #f4a261  #2a9d8f  #264653  #e9c46a
 ```
 
+### Score a palette
+```bash
+python chroma_fountain.py "sunset" --score
+python chroma_fountain.py --preset neon-nights --score
+```
+
+### Compare two palettes
+```bash
+python chroma_fountain.py "sunset" --compare "ocean"
+python chroma_fountain.py "forest" --compare "#ff0000,#00ff00,#0000ff"
+```
+
+### Interactive mode
+```bash
+python chroma_fountain.py --interactive
+# Type text to generate, 'score' to rate, 'save <name>' to store,
+# 'compare <text>' to diff, 'colorblind' to toggle, 'quit' to exit
+```
+
 ---
 
 ## 📚 Python Library Usage
@@ -130,6 +152,8 @@ from chroma_fountain import (
     generate_preset,       # Named preset → palette
     generate_harmony,      # Color harmony from HEX
     hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb,  # Conversions
+    score_palette,         # Score palette quality (v1.2.0)
+    compare_palettes,      # Compare two palettes (v1.2.0)
 )
 ```
 
