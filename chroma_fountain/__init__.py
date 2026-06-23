@@ -23,12 +23,15 @@ format_svg = _mod.format_svg
 format_csv = _mod.format_csv
 format_html = _mod.format_html
 format_png = _mod.format_png
+format_ase = _mod.format_ase
 hex_to_rgb = _mod.hex_to_rgb
 rgb_to_hex = _mod.rgb_to_hex
 rgb_to_hsl = _mod.rgb_to_hsl
 hsl_to_rgb = _mod.hsl_to_rgb
 simulate_colorblind = _mod.simulate_colorblind
 make_colorblind_safe = _mod.make_colorblind_safe
+blend_palettes = _mod.blend_palettes
+blend_texts = _mod.blend_texts
 save_palette = _mod.save_palette
 load_palette = _mod.load_palette
 list_saved_palettes = _mod.list_saved_palettes
@@ -55,12 +58,15 @@ __all__ = [
     "format_csv",
     "format_html",
     "format_png",
+    "format_ase",
     "hex_to_rgb",
     "rgb_to_hex",
     "rgb_to_hsl",
     "hsl_to_rgb",
     "simulate_colorblind",
     "make_colorblind_safe",
+    "blend_palettes",
+    "blend_texts",
     "save_palette",
     "load_palette",
     "list_saved_palettes",

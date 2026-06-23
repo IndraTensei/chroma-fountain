@@ -25,7 +25,7 @@ import struct
 import sys
 from pathlib import Path
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # ─── Color Science ────────────────────────────────────────────────────────────
 
@@ -422,12 +422,21 @@ PRESETS = {
     "electric-pulse":  ["neon", "electric", "cyan", "magenta", "dark"],
     "cozy-cabin":      ["cozy", "wood", "cream", "rust", "forest"],
     "arctic-aurora":   ["ice", "mint", "violet", "midnight", "silver"],
+    "volcanic-dusk":  ["lava", "obsidian", "rust", "smoke", "gold"],
+    "zen-garden":     ["sage", "stone", "moss", "sand", "cream"],
+    "sakura-wind":    ["pink", "blush", "ivory", "sky", "lavender"],
+    "deep-space":     ["midnight", "indigo", "neon", "silver", "charcoal"],
+    "golden-hour":    ["gold", "honey", "amber", "cream", "warm"],
+    "misty-forest":   ["fog", "moss", "sage", "slate", "mint"],
+    "candy-pop":      ["pink", "cyan", "lemon", "mint", "lavender"],
 }
 
 # Fix missing entries
 SEMANTIC_COLORS["mango"] = (38, 12, (70, 90), (55, 70))
 SEMANTIC_COLORS["terracotta"] = (18, 12, (45, 60), (40, 52))
 SEMANTIC_COLORS["cyan"] = (185, 12, (70, 95), (45, 60))
+SEMANTIC_COLORS["amber"] = (40, 10, (70, 90), (50, 65))
+SEMANTIC_COLORS["stone"] = (30, 10, (8, 20), (55, 70))
 SEMANTIC_COLORS["electric"] = (200, 30, (80, 100), (45, 60))
 
 
@@ -898,6 +907,136 @@ def format_png(colors, swatch_width=120, swatch_height=160, label_height=30):
     return bytes(png)
 
 
+# ─── ASE (Adobe Swatch Exchange) Export ────────────────────────────────────────
+
+def format_ase(colors, palette_name="Chroma Fountain Palette"):
+    """Export palette as Adobe Swatch Exchange (.ase) file.
+
+    ASE is a binary format supported by Adobe Photoshop, Illustrator,
+    InDesign, and many other design tools.
+
+    Args:
+        colors: List of HEX color strings
+        palette_name: Name for the palette in the ASE file
+
+    Returns:
+        bytes: Complete ASE file as bytes
+
+    Reference:
+        Adobe Swatch Exchange (ASE) file format specification
+    """
+    data = bytearray()
+
+    # ASE header
+    # Signature: "ASEF"
+    data.extend(b"ASEF")
+    # Version: 1.0 (major=1, minor=0)
+    data.extend(struct.pack(">HH", 1, 0))
+    # Number of blocks
+    data.extend(struct.pack(">I", len(colors)))
+
+    for c in colors:
+        r, g, b = hex_to_rgb(c)
+        # Normalize to 0.0-1.0 float
+        rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+
+        # Block type: 0x0001 = color entry
+        data.extend(struct.pack(">H", 0x0001))
+
+        # Block name (UTF-16BE, null-terminated, with length prefix including null)
+        name = c  # Use hex as the swatch name
+        name_bytes = name.encode("utf-16-be") + b"\x00\x00"
+        name_len = len(name_bytes) // 2  # length in UTF-16 code units
+
+        # Block length: name_len (2 bytes) + name_bytes + color_mode (4 bytes) +
+        #               3 floats (12 bytes) + color_type (2 bytes)
+        block_len = 2 + len(name_bytes) + 4 + 12 + 2
+        data.extend(struct.pack(">I", block_len))
+
+        # Name length (including null terminator)
+        data.extend(struct.pack(">H", name_len))
+        # Name bytes
+        data.extend(name_bytes)
+
+        # Color mode: "RGB " (4 bytes, space-padded)
+        data.extend(b"RGB ")
+        # RGB values as big-endian floats
+        data.extend(struct.pack(">fff", rf, gf, bf))
+
+        # Color type: 0 = global, 1 = spot, 2 = normal
+        data.extend(struct.pack(">H", 0))
+
+    return bytes(data)
+
+
+# ─── Palette Blending ──────────────────────────────────────────────────────────
+
+def blend_palettes(colors_a, colors_b, ratio=0.5):
+    """Blend two palettes together by interpolating in HSL space.
+
+    Args:
+        colors_a: First palette (list of HEX strings)
+        colors_b: Second palette (list of HEX strings)
+        ratio: Blend ratio — 0.0 = all A, 1.0 = all B, 0.5 = even mix
+
+    Returns:
+        List of HEX color strings representing the blended palette.
+        The length is the max of the two input lengths.
+    """
+    if not colors_a and not colors_b:
+        return []
+    if not colors_a:
+        return list(colors_b)
+    if not colors_b:
+        return list(colors_a)
+
+    max_len = max(len(colors_a), len(colors_b))
+
+    # Extend shorter palette by cycling
+    extended_a = [colors_a[i % len(colors_a)] for i in range(max_len)]
+    extended_b = [colors_b[i % len(colors_b)] for i in range(max_len)]
+
+    result = []
+    for ca, cb in zip(extended_a, extended_b):
+        hsl_a = rgb_to_hsl(*hex_to_rgb(ca))
+        hsl_b = rgb_to_hsl(*hex_to_rgb(cb))
+
+        # Interpolate hue (handle circular wraparound)
+        h_a, h_b = hsl_a[0], hsl_b[0]
+        # Choose the shortest path around the color wheel
+        diff = h_b - h_a
+        if diff > 180:
+            diff -= 360
+        elif diff < -180:
+            diff += 360
+        h_blend = (h_a + diff * ratio) % 360
+
+        # Interpolate saturation and lightness linearly
+        s_blend = hsl_a[1] + (hsl_b[1] - hsl_a[1]) * ratio
+        l_blend = hsl_a[2] + (hsl_b[2] - hsl_a[2]) * ratio
+
+        result.append(rgb_to_hex(*hsl_to_rgb(h_blend, s_blend, l_blend)))
+
+    return result
+
+
+def blend_texts(text_a, text_b, count=5, ratio=0.5):
+    """Generate a palette by blending two text descriptions.
+
+    Args:
+        text_a: First text description
+        text_b: Second text description
+        count: Number of colors in the result
+        ratio: Blend ratio — 0.0 = all A, 1.0 = all B, 0.5 = even mix
+
+    Returns:
+        List of HEX color strings
+    """
+    colors_a = generate_from_text(text_a, count)
+    colors_b = generate_from_text(text_b, count)
+    return blend_palettes(colors_a, colors_b, ratio)
+
+
 # ─── Palette Save / Load / History ─────────────────────────────────────────────
 
 SAVE_DIR = Path.home() / ".chroma-fountain"
@@ -1281,7 +1420,8 @@ def interactive_mode():
   list             List all saved palettes
   colorblind       Toggle colorblind optimization on/off
   count <n>        Change number of colors
-  format <fmt>     Change output format (terminal/json/css/svg/html)
+  format <fmt>     Change output format (terminal/json/css/svg/html/ase/png)
+  blend <a> <b>    Blend two text descriptions (e.g., blend sunset ocean)
   compare <text>   Compare current palette with a new one
   help             Show this help
   quit             Exit interactive mode""")
@@ -1345,8 +1485,8 @@ def interactive_mode():
             print(f"Color count set to {count}.")
 
         elif cmd == "format":
-            if arg not in ("terminal", "json", "css", "scss", "svg", "csv", "html"):
-                print(f"Unknown format '{arg}'. Choose from: terminal, json, css, scss, svg, csv, html")
+            if arg not in ("terminal", "json", "css", "scss", "svg", "csv", "html", "png", "ase"):
+                print(f"Unknown format '{arg}'. Choose from: terminal, json, css, scss, svg, csv, html, png, ase")
                 continue
             current_format = arg
             if arg == "terminal":
@@ -1363,6 +1503,10 @@ def interactive_mode():
                 print(format_csv(current_colors))
             elif arg == "html":
                 print("HTML output. Use --output in CLI mode to save to file.")
+            elif arg == "png":
+                print("PNG output. Use --output in CLI mode to save to file.")
+            elif arg == "ase":
+                print("ASE output. Use --output in CLI mode to save to file.")
 
         elif cmd == "compare":
             if not arg:
@@ -1372,6 +1516,16 @@ def interactive_mode():
             if cb_optimize:
                 new_colors = make_colorblind_safe(new_colors, cb_type)
             print(compare_palettes(current_colors, new_colors, "Current", f'"{arg}"'))
+
+        elif cmd == "blend":
+            parts = arg.split(maxsplit=1) if arg else []
+            if len(parts) < 2:
+                print("Usage: blend <text_a> <text_b>")
+                continue
+            current_colors = blend_texts(parts[0], parts[1], count)
+            if cb_optimize:
+                current_colors = make_colorblind_safe(current_colors, cb_type)
+            print(format_terminal(current_colors))
 
         else:
             # Treat as text input
@@ -1409,6 +1563,7 @@ Examples:
     src.add_argument("--preset", "-p", metavar="NAME", help="Use a named preset palette")
     src.add_argument("--harmony", metavar="HEX", help="Generate color harmony from a HEX color")
     src.add_argument("--list-presets", action="store_true", help="List all available presets")
+    src.add_argument("--blend", metavar="TEXT", nargs=2, help="Blend two text descriptions (e.g., --blend sunset ocean)")
 
     # Save / Load / List (not mutually exclusive with input sources)
     p.add_argument("--list-saved", action="store_true", help="List all saved palettes")
@@ -1426,7 +1581,7 @@ Examples:
     # Options
     p.add_argument("--count", "-n", type=int, default=5, help="Number of colors (default: 5)")
     p.add_argument("--format", "-f", default="terminal",
-                   choices=["terminal", "json", "css", "scss", "svg", "csv", "html", "png"],
+                   choices=["terminal", "json", "css", "scss", "svg", "csv", "html", "png", "ase"],
                    help="Output format (default: terminal)")
     p.add_argument("--output", "-o", metavar="FILE", help="Write output to file instead of stdout")
     p.add_argument("--harmony-mode", default="complementary",
@@ -1439,6 +1594,8 @@ Examples:
     p.add_argument("--colorblind-type", default="deuteranopia",
                    choices=["protanopia", "deuteranopia", "tritanopia"],
                    help="Type of color vision deficiency (default: deuteranopia)")
+    p.add_argument("--blend-ratio", type=float, default=0.5,
+                   help="Blend ratio for --blend (0.0=all first, 1.0=all second, default: 0.5)")
     p.add_argument("--tags", metavar="TAGS", help="Comma-separated tags for saved palettes")
     p.add_argument("--version", "-v", action="version", version=f"chroma-fountain {__version__}")
 
@@ -1481,6 +1638,8 @@ def main():
         if not base.startswith("#"):
             base = "#" + base
         colors = generate_harmony(base, args.harmony_mode)
+    elif args.blend:
+        colors = blend_texts(args.blend[0], args.blend[1], args.count, args.blend_ratio)
     elif args.text:
         colors = generate_from_text(args.text, args.count)
     else:
@@ -1513,21 +1672,22 @@ def main():
         output = format_html(colors)
     elif args.format == "png":
         output = format_png(colors)
+    elif args.format == "ase":
+        output = format_ase(colors)
     else:
         output = format_terminal(colors)
 
     # Output
     if args.output:
-        mode = "wb" if args.format == "png" else "w"
+        mode = "wb" if args.format in ("png", "ase") else "w"
         with open(args.output, mode) as f:
             f.write(output)
             if mode == "w":
                 f.write("\n")
         print(f"Palette saved to {args.output}", file=sys.stderr)
     else:
-        if args.format == "png":
-            # Can't write binary to stdout easily; warn and use terminal format
-            print("Error: PNG format requires --output <file>.", file=sys.stderr)
+        if args.format in ("png", "ase"):
+            print(f"Error: {args.format.upper()} format requires --output <file>.", file=sys.stderr)
             print("Falling back to terminal output.", file=sys.stderr)
             print(format_terminal(colors, show_info=not args.no_info))
         else:

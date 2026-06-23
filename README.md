@@ -17,9 +17,9 @@ No npm. No pip installs. No API keys. Just pure Python 3.
 - **🎭 Text-to-Color** — Type `"sunset over the ocean"` and get a matching palette
 - **🖼️ Image Extraction** — Pull dominant colors from PNG, JPEG, BMP, or GIF images
 - **🎲 Random Generation** — Get surprised with beautiful random palettes
-- **📋 15 Built-in Presets** — From "autumn-harvest" to "neon-nights"
+- **📋 23 Built-in Presets** — From "autumn-harvest" to "candy-pop"
 - **🔗 Color Harmonies** — Generate complementary, triadic, analogous, split-complementary, tetradic, and monochromatic harmonies
-- **📤 7 Output Formats** — Terminal, JSON, CSS, SCSS, SVG, CSV, HTML
+- **📤 8 Output Formats** — Terminal, JSON, CSS, SCSS, SVG, CSV, HTML, ASE, PNG
 - **🌐 90+ Semantic Keywords** — Understands emotions, nature, materials, and vibes
 - **⚡ Zero Dependencies** — Uses only Python standard library
 - **🔬 Color Science** — Proper HSL conversion, contrast ratios, and perceptual diversity
@@ -27,6 +27,9 @@ No npm. No pip installs. No API keys. Just pure Python 3.
 - **📊 Palette Scoring** — Rate palettes on contrast, diversity & colorblind safety with letter grades
 - **🔀 Palette Comparison** — Compare two palettes side-by-side with score diffs
 - **💬 Interactive Mode** — REPL for iterative palette refinement with save/load/score/compare
+- **🔗 Palette Blending** — Blend two text descriptions or palettes with adjustable ratio
+- **📦 ASE Export** — Export palettes as Adobe Swatch Exchange files for Photoshop/Illustrator
+- **🎨 23 Built-in Presets** — From "autumn-harvest" to "candy-pop"
 
 ---
 
@@ -121,7 +124,20 @@ python chroma_fountain.py "forest" --compare "#ff0000,#00ff00,#0000ff"
 ```bash
 python chroma_fountain.py --interactive
 # Type text to generate, 'score' to rate, 'save <name>' to store,
-# 'compare <text>' to diff, 'colorblind' to toggle, 'quit' to exit
+# 'compare <text>' to diff, 'blend <a> <b>' to blend, 'colorblind' to toggle, 'quit' to exit
+```
+
+### Blend two palettes
+```bash
+python chroma_fountain.py --blend sunset ocean
+python chroma_fountain.py --blend sunset ocean --blend-ratio 0.3
+python chroma_fountain.py --blend sunset ocean --format css
+```
+
+### Export to Adobe Swatch Exchange
+```bash
+python chroma_fountain.py "sunset" --format ase --output palette.ase
+python chroma_fountain.py --preset neon-nights --format ase --output neon.ase
 ```
 
 ---
@@ -145,15 +161,18 @@ print(css)
 
 # All available functions
 from chroma_fountain import (
-    generate_from_text,    # Text → palette
-    generate_from_seed,    # String seed → deterministic palette
+    generate_from_text,    # Text -> palette
+    generate_from_seed,    # String seed -> deterministic palette
     generate_random,       # Random palette
-    generate_from_image,   # Image file → dominant colors
-    generate_preset,       # Named preset → palette
+    generate_from_image,   # Image file -> dominant colors
+    generate_preset,       # Named preset -> palette
     generate_harmony,      # Color harmony from HEX
     hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb,  # Conversions
     score_palette,         # Score palette quality (v1.2.0)
     compare_palettes,      # Compare two palettes (v1.2.0)
+    blend_palettes,        # Blend two palettes in HSL space (v1.3.0)
+    blend_texts,           # Blend two text descriptions (v1.3.0)
+    format_ase,            # Export as Adobe Swatch Exchange (v1.3.0)
 )
 ```
 
@@ -207,6 +226,8 @@ python chroma_fountain.py --harmony "#ff7f50" --harmony-mode triadic
 | `svg` | Visual SVG image with swatches | Design mockups |
 | `csv` | Comma-separated values | Spreadsheet import |
 | `html` | Self-contained HTML preview | Sharing, presenting |
+| `png` | PNG image with color swatches | Social media, documentation |
+| `ase` | Adobe Swatch Exchange | Photoshop, Illustrator, InDesign |
 
 ---
 
