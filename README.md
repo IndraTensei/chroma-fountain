@@ -29,6 +29,9 @@ No npm. No pip installs. No API keys. Just pure Python 3.
 - **💬 Interactive Mode** — REPL for iterative palette refinement with save/load/score/compare
 - **🔗 Palette Blending** — Blend two text descriptions or palettes with adjustable ratio
 - **📦 ASE Export** — Export palettes as Adobe Swatch Exchange files for Photoshop/Illustrator
+- **🛡️ Accessibility Report** — WCAG contrast matrix, best pair, and colorblind-safety summary via `--a11y`
+- **🎯 Best Contrast Pair** — Find the most readable bg/fg combo in a palette via `--best-contrast`
+- **🔍 Search Saved Palettes** — Find saved palettes by name or tag via `--search-saved`
 - **🎨 23 Built-in Presets** — From "autumn-harvest" to "candy-pop"
 
 ---
@@ -140,6 +143,28 @@ python chroma_fountain.py "sunset" --format ase --output palette.ase
 python chroma_fountain.py --preset neon-nights --format ase --output neon.ase
 ```
 
+### Accessibility report (WCAG contrast)
+```bash
+python chroma_fountain.py "sunset" --a11y
+python chroma_fountain.py --preset neon-nights --a11y
+```
+Prints a contrast matrix between every pair of colors, the WCAG level for each pair (AAA / AA / AA Large / Fail), the single highest-contrast foreground/background pair, and a colorblind-safety summary.
+
+### Best contrast pair only
+```bash
+python chroma_fountain.py "sunset" --best-contrast
+python chroma_fountain.py --preset neon-nights --best-contrast
+```
+Prints just the most readable background/foreground pair found in the palette.
+
+### Search saved palettes
+```bash
+python chroma_fountain.py --save brand --tags web,blue
+python chroma_fountain.py --search-saved blue
+python chroma_fountain.py --search-saved web
+```
+Searches saved palettes by name or tag (case-insensitive substring match).
+
 ---
 
 ## 📚 Python Library Usage
@@ -169,10 +194,13 @@ from chroma_fountain import (
     generate_harmony,      # Color harmony from HEX
     hex_to_rgb, rgb_to_hex, rgb_to_hsl, hsl_to_rgb,  # Conversions
     score_palette,         # Score palette quality (v1.2.0)
-    compare_palettes,      # Compare two palettes (v1.2.0)
-    blend_palettes,        # Blend two palettes in HSL space (v1.3.0)
-    blend_texts,           # Blend two text descriptions (v1.3.0)
-    format_ase,            # Export as Adobe Swatch Exchange (v1.3.0)
+    compare_palettes,       # Compare two palettes (v1.2.0)
+    blend_palettes,         # Blend two palettes in HSL space (v1.3.0)
+    blend_texts,            # Blend two text descriptions (v1.3.0)
+    format_ase,             # Export as Adobe Swatch Exchange (v1.3.0)
+    best_contrast_pair,     # Highest-contrast bg/fg pair (v1.4.0)
+    format_a11y_report,     # WCAG accessibility report (v1.4.0)
+    search_saved_palettes,  # Search saved palettes by name/tag (v1.4.0)
 )
 ```
 

@@ -25,7 +25,7 @@ import struct
 import sys
 from pathlib import Path
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # ─── Color Science ────────────────────────────────────────────────────────────
 
@@ -1121,6 +1121,40 @@ def list_saved_palettes():
         print(f"  {name:20s} {swatches}  {num} colors{tags}  ({saved_at})")
 
 
+def search_saved_palettes(query):
+    """Search saved palettes by name or tag (case-insensitive substring).
+
+    Prints matching palettes with their color swatches and returns the count.
+    """
+    palettes = _load_saved_palettes()
+    if not palettes:
+        print("No saved palettes yet. Use --save <name> to save one.")
+        return 0
+
+    q = query.lower()
+    matches = []
+    for name, data in sorted(palettes.items()):
+        tags = [t.lower() for t in data.get("tags", [])]
+        if q in name.lower() or any(q in t for t in tags):
+            matches.append((name, data))
+
+    if not matches:
+        print(f"No saved palettes match '{query}'.")
+        return 0
+
+    print(f"Found {len(matches)} palette(s) matching '{query}':")
+    for name, data in matches:
+        swatches = ""
+        for c in data["colors"][:8]:
+            r, g, b = hex_to_rgb(c)
+            swatches += f"\033[48;2;{r};{g};{b}m  \033[0m"
+        if len(data["colors"]) > 8:
+            swatches += " …"
+        tag_str = f" [{', '.join(data['tags'])}]" if data.get("tags") else ""
+        print(f"  {name:20s} {swatches}  {len(data['colors'])} colors{tag_str}")
+    return len(matches)
+
+
 # ─── Harmony Generation ───────────────────────────────────────────────────────
 
 def generate_harmony(base_hex, mode="complementary"):
@@ -1353,6 +1387,96 @@ def compare_palettes(colors_a, colors_b, label_a="Palette A", label_b="Palette B
             f"{arrow} {sign}{diff:.1f}"
         )
     lines.append(f"║  Grade: {score_a['grade']} → {score_b['grade']}")
+    lines.append(f"╚{'═' * 58}╝")
+
+    return "\n".join(lines)
+
+
+# ─── Accessibility Report ────────────────────────────────────────────────────
+
+def best_contrast_pair(colors):
+    """Return the (bg, fg) pair with the highest WCAG contrast ratio.
+
+    Iterates over every ordered pair of colors and returns the combination
+    that maximizes readability, along with the contrast ratio. Useful for
+    picking a readable text/background combo from an arbitrary palette.
+    """
+    best = None
+    for bg in colors:
+        for fg in colors:
+            if fg == bg:
+                continue
+            cr = contrast_ratio(bg, fg)
+            if best is None or cr > best[2]:
+                best = (bg, fg, cr)
+    if best is None:
+        return (colors[0], "#000000", contrast_ratio(colors[0], "#000000"))
+    return best
+
+
+def format_a11y_report(colors, title="Accessibility Report"):
+    """Build a WCAG accessibility report for a palette.
+
+    Shows:
+      - The best foreground/background pair for maximum readability
+      - A contrast matrix between every pair of colors
+      - Per-pair WCAG level (AAA / AA / AA Large / Fail)
+      - Colorblind-safety summary
+    """
+    if len(colors) < 2:
+        return f"{title}: need at least 2 colors for an accessibility report."
+
+    bg, fg, best_cr = best_contrast_pair(colors)
+
+    def wcag_level(cr):
+        if cr >= 7:
+            return "AAA"
+        elif cr >= 4.5:
+            return "AA"
+        elif cr >= 3:
+            return "AA Large"
+        else:
+            return "Fail"
+
+    lines = []
+    lines.append(f"╔{'═' * 58}╗")
+    lines.append(f"║ 🛡  {title:^50s} ║")
+    lines.append(f"╠{'═' * 58}╣")
+
+    # Best pair
+    r, g, b = hex_to_rgb(bg)
+    lines.append(f"║  Best contrast pair:{f' {wcag_level(best_cr)}':<24} ║")
+    lines.append(
+        f"║    bg {bg}  fg {fg}  →  {best_cr:.2f}:1"
+        f"{' ' * (31 - len(bg) - len(fg) - len(f'{best_cr:.2f}'))}║"
+    )
+    lines.append(f"║{' ' * 58}║")
+
+    # Contrast matrix
+    lines.append(f"║  Contrast matrix (ratio : WCAG level):{' ' * 16}║")
+    # Header row with abbreviated hex
+    header = "║    " + "".join(f"{c[1:]}  " for c in colors)
+    lines.append(header.ljust(59) + "║")
+    for c in colors:
+        row = f"║  {c[1:]} "
+        for c2 in colors:
+            cr = contrast_ratio(c, c2)
+            lvl = wcag_level(cr)
+            tag = f"{cr:4.1f}:{lvl[:2]}"
+            row += f"{tag:>9}"
+        lines.append(row.ljust(59) + "║")
+
+    lines.append(f"║{' ' * 58}║")
+
+    # Colorblind safety summary
+    cb_min = float("inf")
+    for cvd in _CB_MATRICES:
+        for i in range(len(colors)):
+            for j in range(i + 1, len(colors)):
+                d = colorblind_distance(colors[i], colors[j], cvd)
+                cb_min = min(cb_min, d)
+    cb_state = "OK" if cb_min >= 30 else "Risky"
+    lines.append(f"║  Colorblind min distance: {cb_min:5.1f}  ({cb_state}){' ' * 20}║")
     lines.append(f"╚{'═' * 58}╝")
 
     return "\n".join(lines)
@@ -1597,6 +1721,12 @@ Examples:
     p.add_argument("--blend-ratio", type=float, default=0.5,
                    help="Blend ratio for --blend (0.0=all first, 1.0=all second, default: 0.5)")
     p.add_argument("--tags", metavar="TAGS", help="Comma-separated tags for saved palettes")
+    p.add_argument("--a11y", action="store_true",
+                   help="Print a WCAG accessibility report (contrast matrix + best pair)")
+    p.add_argument("--best-contrast", action="store_true",
+                   help="Print only the highest-contrast foreground/background pair")
+    p.add_argument("--search-saved", metavar="QUERY",
+                   help="Search saved palettes by name or tag")
     p.add_argument("--version", "-v", action="version", version=f"chroma-fountain {__version__}")
 
     return p
@@ -1620,6 +1750,11 @@ def main():
     # Handle --list-saved
     if args.list_saved:
         list_saved_palettes()
+        return
+
+    # Handle --search-saved
+    if args.search_saved:
+        search_saved_palettes(args.search_saved)
         return
 
     # Generate palette
@@ -1713,6 +1848,17 @@ def main():
             # Treat as text
             compare_colors = generate_from_text(args.compare, len(colors))
         print(compare_palettes(colors, compare_colors, "Generated", args.compare))
+
+    # Handle --best-contrast
+    if args.best_contrast:
+        bg, fg, cr = best_contrast_pair(colors)
+        print()
+        print(f"Best contrast pair: bg {bg}  fg {fg}  ({cr:.2f}:1)")
+
+    # Handle --a11y
+    if args.a11y:
+        print()
+        print(format_a11y_report(colors))
 
 if __name__ == "__main__":
     main()

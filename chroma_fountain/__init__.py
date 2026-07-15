@@ -37,6 +37,8 @@ load_palette = _mod.load_palette
 list_saved_palettes = _mod.list_saved_palettes
 score_palette = _mod.score_palette
 format_score_report = _mod.format_score_report
+format_a11y_report = _mod.format_a11y_report
+best_contrast_pair = _mod.best_contrast_pair
 compare_palettes = _mod.compare_palettes
 interactive_mode = _mod.interactive_mode
 PRESETS = _mod.PRESETS
@@ -72,6 +74,8 @@ __all__ = [
     "list_saved_palettes",
     "score_palette",
     "format_score_report",
+    "format_a11y_report",
+    "best_contrast_pair",
     "compare_palettes",
     "interactive_mode",
     "PRESETS",
